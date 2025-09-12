@@ -1,0 +1,16 @@
+{
+  "name": "Cheats",
+  "type": "TOOL",
+  "description": "A MinUI pak for finding and downloading cheat files (.cht)",
+  "author": "mikecosentino",
+  "repo_url": "https://github.com/mikecosentino/nextui-cheats",
+  "release_filename": "Cheats.pak.zip",
+  "platforms": [
+    "tg5040"
+  ],
+  "changelog": {
+    "v0.1.0": "Initial release"
+  },
+  "launch": "launch.sh",
+  "version": "v0.1.0"
+}
