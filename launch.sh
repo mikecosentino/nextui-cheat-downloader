@@ -1,7 +1,6 @@
 #!/bin/sh
-# Cheat Downloader. A MinUI pak for downloading cheat files from the Libretro database
+# Cheats Downloader. A MinUI pak for downloading cheat files (.cht) from the Libretro database.
 # Mike Cosentino
-# https://github.com/mikecosentino/nextui-cheat-downloader
 
 # Setup
 PAK_DIR="$(dirname "$0")"
@@ -34,7 +33,29 @@ fetch_root_index() {
 }
 
 list_systems() {
-  jq -r '{items: [.tree[] | {name: .path}], selected: 0}' "$CACHE_DIR/root.json" > "$CACHE_DIR/systems.json"
+  local tmp="$CACHE_DIR/systems_all.json"
+  local out="$CACHE_DIR/systems.json"
+
+  # Build the raw list of systems from root.json
+  jq -r '{items: [.tree[] | {name: .path}], selected: 0}' "$CACHE_DIR/root.json" > "$tmp"
+
+  # Start clean
+  echo '{ "items": [], "selected": 0 }' > "$out"
+
+  # Loop over each system in the JSON and only keep supported ones
+  jq -r '.items[].name' "$tmp" | while read -r system_name; do
+    # Get short-names for this system
+    short_names=$(jq -r --arg value "$system_name" 'to_entries[] | select(.value == $value) | .key' "$PAK_DIR/systems-mapping.json")
+
+    # See if any ROM dir exists for these short names
+    for sn in $short_names; do
+      if find "$ROM_ROOT" -maxdepth 1 -type d -name "*($sn)" | grep -q .; then
+        # Append system_name to out.json
+        jq --arg name "$system_name" '.items += [{name: $name}]' "$out" > "$out.tmp" && mv "$out.tmp" "$out"
+        break
+      fi
+    done
+  done
 }
 
 list_cheats_for_system() {
@@ -68,133 +89,86 @@ download_cheat() {
   local cheat_name="$2"
   local cheat_url="$3"
 
-  local short_name
-  short_name=$(jq -r --arg value "$system_name" \
+  # Get possible short names for this system
+  short_names=$(jq -r --arg value "$system_name" \
     'to_entries[] | select(.value == $value) | .key' \
     "$PAK_DIR/systems-mapping.json")
-  [ -z "$short_name" ] && short_name="$system_name"
 
-  local dest_dir dest_file rom_basename base_cheat_name rom_dir rom_file
-  dest_dir="$CHEATS_ROOT/$short_name"
+  rom_dir=""
+  selected_short=""
+  rom_file=""
+
+  # Try each short name until we find a valid ROM directory
+  for sn in $short_names; do
+    candidate_dir=$(find "$ROM_ROOT" -maxdepth 1 -type d -name "*($sn)" | head -n1)
+    if [ -n "$candidate_dir" ] && [ -d "$candidate_dir" ]; then
+      if ls "$candidate_dir"/* 1>/dev/null 2>&1; then
+        rom_dir="$candidate_dir"
+        selected_short="$sn"
+        break
+      fi
+    fi
+  done
+
+  [ -z "$selected_short" ] && selected_short=$(echo "$short_names" | head -n1)
+  dest_dir="$CHEATS_ROOT/$selected_short"
   mkdir -p "$dest_dir"
 
+  # Normalize the cheat name
   base_cheat_name="${cheat_name%.cht}"
 
-  # ROM directory (find folder ending with "(ShortName)")
-  rom_dir=$(find "$ROM_ROOT" -maxdepth 1 -type d -name "*(${short_name})" | head -n1)
-  [ -z "$rom_dir" ] && rom_dir="$ROM_ROOT/$system_name"
-
   rom_basename=""
-  local matched_cheat_name=""
+  rom_filename=""
   local cheats_json="$CACHE_DIR/cheats.json"
 
-  # Helper: extract title and regions
-  extract_title_and_regions() {
-    local name="$1"
-    local title regions
-    title=$(echo "$name" | sed 's/ *(.*)//g' | xargs) # strip first () block
-    regions=$(echo "$name" | grep -o '([^)]*)' | sed 's/[()]//g' | tr '\n' ';' | sed 's/;$//')
-    echo "$title|$regions"
-  }
-
-  # --- Priority 1: exact ROM filename match
+  # --- Try to match ROMs to the *selected cheat* ---
   if [ -d "$rom_dir" ]; then
     for rom_file in "$rom_dir"/*; do
       [ -f "$rom_file" ] || continue
-      local rom_file_base="${rom_file##*/}"
+      rom_file_base="${rom_file##*/}"
       rom_file_base="${rom_file_base%.*}"
-      matched_cheat_name=$(jq -r --arg rb "$rom_file_base" \
-        '.items[] | select((.name | endswith(".cht")) and ((.name | sub("\\.cht$"; "")) == $rb)) | .name' "$cheats_json")
-      if [ -n "$matched_cheat_name" ]; then
+
+      # Exact match against selected cheat
+      if [ "$rom_file_base" = "$base_cheat_name" ]; then
         rom_basename="$rom_file_base"
-        echo "Exact match found: $matched_cheat_name for ROM: $rom_file_base"
+        rom_filename="$(basename "$rom_file")"
+        echo "Exact ROM match for selected cheat: $cheat_name"
         break
       fi
-    done
-  fi
 
-  # --- Priority 2: same title + overlapping region tags
-  if [ -z "$matched_cheat_name" ] && [ -d "$rom_dir" ]; then
-    jq -r '.items[].name' "$cheats_json" > "$CACHE_DIR/.cheat_names.txt"
-    for rom_file in "$rom_dir"/*; do
-      [ -f "$rom_file" ] || continue
-      local rom_file_base="${rom_file##*/}"
-      rom_file_base="${rom_file_base%.*}"
-
-      rom_line=$(extract_title_and_regions "$rom_file_base")
-      rom_title=$(echo "$rom_line" | cut -d'|' -f1)
-      rom_regions=$(echo "$rom_line" | cut -d'|' -f2-)
-
-      while IFS= read -r c_name; do
-        local cheat_line c_title c_regions
-        c_name="${c_name%.cht}"
-        cheat_line=$(extract_title_and_regions "$c_name")
-        c_title=$(echo "$cheat_line" | cut -d'|' -f1)
-        c_regions=$(echo "$cheat_line" | cut -d'|' -f2-)
-
-        if [ "$rom_title" = "$c_title" ]; then
-          overlap_found=0
-          if [ -z "$rom_regions" ] && [ -z "$c_regions" ]; then
-            overlap_found=1
-          else
-            for rr in $(echo "$rom_regions" | tr ';' ' '); do
-              for cr in $(echo "$c_regions" | tr ';' ' '); do
-                [ "$rr" = "$cr" ] && overlap_found=1 && break 2
-              done
-            done
-          fi
-          if [ $overlap_found -eq 1 ]; then
-            matched_cheat_name="${c_name}.cht"
-            rom_basename="$rom_file_base"
-            echo "Title+region match: $matched_cheat_name for ROM: $rom_file_base"
-            break 2
-          fi
-        fi
-      done < "$CACHE_DIR/.cheat_names.txt"
-    done
-  fi
-
-  # --- Priority 3: substring (case-insensitive)
-  if [ -z "$matched_cheat_name" ] && [ -d "$rom_dir" ]; then
-    for rom_file in "$rom_dir"/*; do
-      [ -f "$rom_file" ] || continue
-      local rom_file_base="${rom_file##*/}"
-      rom_file_base="${rom_file_base%.*}"
+      # Fallback: if ROM contains the cheat base name as substring
       rb_lc=$(echo "$rom_file_base" | tr '[:upper:]' '[:lower:]')
-      matched_cheat_name=$(jq -r --arg rb "$rb_lc" \
-        '.items[] | select((.name | endswith(".cht")) and ((.name | ascii_downcase | contains($rb)))) | .name' "$cheats_json" | head -n1)
-      if [ -n "$matched_cheat_name" ]; then
+      cb_lc=$(echo "$base_cheat_name" | tr '[:upper:]' '[:lower:]')
+      if echo "$rb_lc" | grep -qiF "$cb_lc"; then
         rom_basename="$rom_file_base"
-        echo "Substring match: $matched_cheat_name for ROM: $rom_file_base"
+        rom_filename="$(basename "$rom_file")"
+        echo "Substring ROM match for selected cheat: $cheat_name"
         break
       fi
     done
   fi
 
-  # --- Fallback
-  [ -z "$rom_basename" ] && rom_basename="$base_cheat_name"
-  [ -z "$matched_cheat_name" ] && matched_cheat_name="$cheat_name"
-
-  # Set dest_file: use actual ROM filename (with extension) if available, else fallback to rom_basename
-  if [ -n "$rom_file" ]; then
-    rom_filename="$(basename "$rom_file")"
+  # --- Finalize dest_file ---
+  if [ -n "$rom_filename" ]; then
     dest_file="$dest_dir/${rom_filename}.cht"
     echo "Using ROM filename for cheat: $rom_filename"
   else
-    dest_file="$dest_dir/${rom_basename}.cht"
-    echo "Falling back to rom_basename for cheat: $rom_basename"
+    dest_file="$dest_dir/${base_cheat_name}.cht"
+    echo "No ROM match found, falling back to cheat name: $base_cheat_name"
   fi
 
+  # --- Download cheat ---
   encoded_system_name=$(encode_uri "$system_name")
-  encoded_cheat_name=$(encode_uri "$matched_cheat_name")
+  encoded_cheat_name=$(encode_uri "$cheat_name")
   raw_url="https://raw.githubusercontent.com/libretro/libretro-database/master/cht/${encoded_system_name}/${encoded_cheat_name}"
 
   curl -k -sS -L -H "User-Agent: minui-cheats" -o "$dest_file" "$raw_url"
   if [ -s "$dest_file" ]; then
     echo "Cheat file downloaded: $dest_file"
-    minui-presenter --message "Download finished: ${matched_cheat_name}" --timeout 0
+    minui-presenter --message "Downloaded ${cheat_name} for ${system_name}" --show-time-left --timeout 10
   else
-    echo "Failed to download cheat: ${matched_cheat_name}"
+    echo "Failed to download cheat: ${cheat_name}"
+    minui-presenter --message "Failed to download cheat: ${cheat_name}" --show-time-left --timeout 10
     rm -f "$dest_file"
     return 1
   fi
@@ -213,6 +187,21 @@ display_list() {
   fi
 }
 
+show_status() {
+  local msg="$1"
+  # Start presenter in background and save PID
+  minui-presenter --message "$msg" --timeout -1 &
+  STATUS_PID=$!
+}
+
+hide_status() {
+  if [ -n "$STATUS_PID" ] && kill -0 "$STATUS_PID" 2>/dev/null; then
+    kill "$STATUS_PID"
+    wait "$STATUS_PID" 2>/dev/null
+  fi
+  STATUS_PID=""
+}
+
 main() {
   local local_sha_file="$CACHE_DIR/sha.txt"
   local local_sha=""
@@ -225,7 +214,9 @@ main() {
   remote_sha=$(curl -k -sS -L -H "User-Agent: minui-cheats" "https://api.github.com/repos/libretro/libretro-database/commits/master" | jq -r '.sha')
 
   if [ "$local_sha" != "$remote_sha" ]; then
+    show_status "Fetching system list..."
     fetch_root_index "$remote_sha"
+    hide_status
     echo "$remote_sha" > "$local_sha_file"
   else
     echo "Using cached root index for SHA: $local_sha"
@@ -238,14 +229,19 @@ main() {
     fi
     selected_system=$(jq -r '.items[.selected].name' "$CACHE_DIR/systems_state.json")
 
+    show_status "Loading $selected_system..."
     list_cheats_for_system "$selected_system"
+    hide_status
+
     if ! display_list "$CACHE_DIR/cheats.json" "$selected_system" "$CACHE_DIR/cheats_state.json"; then
       continue
     fi
     selected_cheat_name=$(jq -r '.items[.selected].name' "$CACHE_DIR/cheats_state.json")
     selected_cheat_url=$(jq -r --arg name "$selected_cheat_name" '.items[] | select(.name == $name) | .url' "$CACHE_DIR/cheats.json")
 
+    show_status "Downloading $selected_cheat_name..."
     download_cheat "$selected_system" "$selected_cheat_name" "$selected_cheat_url"
+    hide_status
   done
 }
 
