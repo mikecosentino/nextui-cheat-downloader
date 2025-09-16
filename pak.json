@@ -1,15 +1,15 @@
 {
-  "name": "Cheats",
+  "name": "Cheat Downloader",
   "type": "TOOL",
-  "description": "A MinUI pak for finding and downloading cheat files (.cht)",
+  "description": "A MinUI pak for downloading cheat files from the Libretro database.",
   "author": "mikecosentino",
-  "repo_url": "https://github.com/mikecosentino/nextui-cheats",
+  "repo_url": "https://github.com/mikecosentino/nextui-cheat-downloader",
   "release_filename": "Cheats.pak.zip",
   "platforms": [
     "tg5040"
   ],
   "changelog": {
-    "v0.1.0": "Initial release"
+    "v0.1.0": "Initial release. Ready for testing."
   },
   "launch": "launch.sh",
   "version": "v0.1.0"
