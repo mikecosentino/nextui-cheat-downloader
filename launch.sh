@@ -189,16 +189,14 @@ display_list() {
 
 show_status() {
   local msg="$1"
-  # Start presenter in background and save PID
   minui-presenter --message "$msg" --timeout -1 &
   STATUS_PID=$!
+  echo "Started status presenter PID=$STATUS_PID ($msg)"
 }
 
 hide_status() {
-  if [ -n "$STATUS_PID" ] && kill -0 "$STATUS_PID" 2>/dev/null; then
-    kill "$STATUS_PID"
-    wait "$STATUS_PID" 2>/dev/null
-  fi
+  echo "Killing all minui-presenter instances..."
+  killall -q minui-presenter 2>/dev/null || true
   STATUS_PID=""
 }
 

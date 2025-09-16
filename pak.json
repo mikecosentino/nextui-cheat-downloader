@@ -9,9 +9,10 @@
     "tg5040"
   ],
   "changelog": {
+    "v0.1.2": "Fixed an issue with status screens not going away.",
     "v0.1.1": "Thanks for the help from the NextUI discord for testing and feedback! Lots of fixes.",
     "v0.1.0": "Initial release. Ready for testing."
   },
   "launch": "launch.sh",
-  "version": "v0.1.1"
+  "version": "v0.1.2"
 }
