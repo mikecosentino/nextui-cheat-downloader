@@ -1,0 +1,5 @@
+# VS Code settings
+.vscode/
+
+# macOS junk
+.DS_Store
