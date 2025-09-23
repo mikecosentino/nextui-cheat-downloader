@@ -35,3 +35,8 @@ This pak is designed and tested on the following MinUI Platforms and devices:
 - [minui-list](https://github.com/josegonzalez/minui-list) by Jose Diaz-Gonzalez
 - [minui-presenter](https://github.com/josegonzalez/minui-presenter) by Jose Diaz-Gonzalez
 
+## Known Issues
+
+- Playstation cheats are not renamed to match the local .chd filename
+
+This is early alpha, but it's getting there
