@@ -7,6 +7,10 @@ A MinUI pak for downloading cheat files from the Libretro database
 This pak is designed and tested on the following MinUI Platforms and devices:
 - `tg5040`: Trimui Brick and Trimui Smart Pro
 
+## Known Issues
+
+- Cheat file (.cht) have to be stored in a specific location with a specific file name. I am working on the functionality to automatically find your locally installed game so that the .cht file is appropriately named. For now you need to manually select the game and it'll handle naming and storing the .cht file
+
 ## Installation
 
 1. Mount your MinUI SD card.
@@ -34,9 +38,3 @@ This pak is designed and tested on the following MinUI Platforms and devices:
 
 - [minui-list](https://github.com/josegonzalez/minui-list) by Jose Diaz-Gonzalez
 - [minui-presenter](https://github.com/josegonzalez/minui-presenter) by Jose Diaz-Gonzalez
-
-## Known Issues
-
-- Playstation cheats are not renamed to match the local .chd filename
-
-This is early alpha, but it's getting there

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Cheats Downloader. A MinUI pak for downloading cheat files (.cht) from the Libretro database.
+# Cheats Downloader. A MinUI pak for downloading cheat files from the Libretro database
 # Mike Cosentino
 
 # Setup
@@ -22,9 +22,28 @@ encode_uri() {
   printf '%s' "$1" | jq -Rr @uri
 }
 
+build_system_map() {
+  local map_file="$CACHE_DIR/system_map.json"
+  echo '{' > "$map_file"
+  local first=true
+  for dir in "$ROM_ROOT"/*; do
+    [ -d "$dir" ] || continue
+    folder=$(basename "$dir")
+    case "$folder" in
+      *\(*\)*)
+        short=$(printf '%s\n' "$folder" | sed -n 's/.*(\(.*\)).*/\1/p')
+        $first || echo ',' >> "$map_file"
+        first=false
+        echo "  \"$short\": \"$dir\"" >> "$map_file"
+        ;;
+    esac
+  done
+  echo '}' >> "$map_file"
+}
+
 download_cheat() {
   local gameId="$1"
-  # TODO: Take gameId and then send to API to get the download URL
+  curl -k "https://dev.cosentino.wtf/nextui-cheat-downloader/api/cheat/$gameId" -o "$CACHE_DIR/$gameId.cht"
 }
 
 display_list() {
@@ -70,60 +89,90 @@ cache_system() {
 display_game() {
   local game_id="$1"
   local game_name="$2"
+  local system_short="$3"
 
   show_status "Loading $game_name..."
   curl -k "https://dev.cosentino.wtf/nextui-cheat-downloader/api/game/$game_id" -o "$CACHE_DIR/game.json"
   hide_status
 
-  local augmented_json
-  augmented_json=$(augment_with_matches "$game_id" "$system_short")
+  download_cheat "$game_id"
 
-  if ! display_list "$augmented_json" "$game_name" "$CACHE_DIR/game_state.json"; then
+  if ! display_list "$CACHE_DIR/game.json" "$game_name" "$CACHE_DIR/game_state.json"; then
     return
   fi
 
-  selected_item=$(jq -r --argjson i "$(jq -r '.selected' "$CACHE_DIR/game_state.json")" '.items[$i].name' "$augmented_json")
+  selected_item=$(jq -r --argjson i "$(jq -r '.selected' "$CACHE_DIR/game_state.json")" '.items[$i].name' "$CACHE_DIR/game.json")
 
-  if [ "$selected_item" = "View Cheats" ]; then
-    show_status "Loading Cheats..."
-    curl -k "https://dev.cosentino.wtf/nextui-cheat-downloader/api/cheat/$game_id" -o "$CACHE_DIR/cheats.json"
-    hide_status
-    display_list "$CACHE_DIR/cheats.json" "Cheats for $game_name" "$CACHE_DIR/cheats_state.json"
-  fi
+  case "$selected_item" in
+    "Choose installed game and save cheat")
+      if chosen_file=$(choose_rom "$system_short" "$game_id"); then
+        display_game "$game_id" "$game_name" "$system_short"
+      fi
+      ;;
+    "Download cheat file")
+      download_cheat "$game_id"
+      ;;
+  esac
+
 }
 
-augment_with_matches() {
-  local game_id="$1"
-  local system_short="$2"
-  local output_json="$CACHE_DIR/game_aug.json"
-
+choose_rom() {
+  local system_short="$1"
+  local game_id="$2"
   local rom_dir
-  rom_dir=$(find "$ROM_ROOT" -maxdepth 1 -type d -name "*($system_short)" | head -n 1)
+  rom_dir=$(jq -r --arg short "$system_short" '.[$short]' "$CACHE_DIR/system_map.json")
+  if [ -z "$rom_dir" ] || [ "$rom_dir" = "null" ]; then
+    echo '{ "items": [ { "name": "No ROMs found" } ] }' > "$roms_json"
+    return 1
+  fi
+  local roms_json="$CACHE_DIR/roms_$system_short.json"
+  local state_file="$CACHE_DIR/roms_state.json"
 
-  local matched_file=""
-  if [ -n "$rom_dir" ]; then
-    local myrient_files
-    myrient_files=$(jq -r '.items[] | select(.name=="Myrient Filename") | .options[]' "$CACHE_DIR/game.json")
-    if [ -n "$myrient_files" ]; then
-      for f in $myrient_files; do
-        if [ -f "$rom_dir/$f" ]; then
-          matched_file="$f"
-          break
-        fi
-      done
-    fi
+  if [ ! -d "$rom_dir" ]; then
+    echo '{ "items": [ { "name": "No ROMs found" } ] }' > "$roms_json"
+    return 1
   fi
 
-  if [ -n "$matched_file" ]; then
-    curl -k "https://dev.cosentino.wtf/nextui-cheat-downloader/api/match/$game_id/$(encode_uri "$matched_file")" -o "$output_json"
-  else
-    curl -k "https://dev.cosentino.wtf/nextui-cheat-downloader/api/match/$game_id/none" -o "$output_json"
+  # Build JSON list of ROMs
+  {
+    echo '{ "items": ['
+    local first=true
+    for f in "$rom_dir"/*; do
+      [ -f "$f" ] || continue
+      name=$(basename "$f")
+      $first || echo ','
+      first=false
+      echo "  { \"name\": \"$name\", \"file\": \"$f\" }"
+    done
+    echo '] }'
+  } > "$roms_json"
+
+  # Display to user
+  if ! display_list "$roms_json" "Choose installed game..." "$state_file"; then
+    return 1
   fi
 
-  echo "$output_json"
+  # Grab selection
+  local selected_index
+  selected_index=$(jq -r '.selected' "$state_file")
+  local selected_file
+  selected_file=$(jq -r --argjson i "$selected_index" '.items[$i].file' "$roms_json")
+
+  # Move cached cheat file to CHEATS_ROOT/$system_short/<rom_basename>.cht
+  local rom_basename
+  rom_basename=$(basename "$selected_file")
+  mkdir -p "$CHEATS_ROOT/$system_short"
+  if [ -f "$CACHE_DIR/$game_id.cht" ]; then
+    mv "$CACHE_DIR/$game_id.cht" "$CHEATS_ROOT/$system_short/$rom_basename.cht"
+    echo "Moved cheat file to $CHEATS_ROOT/$system_short/$rom_basename.cht"
+    minui-presenter --message "Cheat saved for $rom_basename" --timeout 3
+  fi
+
+  echo "$selected_file"
 }
 
 main() {
+  build_system_map
   cache_all_systems
   cat "$CACHE_DIR/systems.json"
 
@@ -151,7 +200,7 @@ main() {
     game_name=$(jq -r --argjson i "$selected_game_index" '.items[$i].name' "$CACHE_DIR/$system_short.json")
     game_id=$(jq -r --argjson i "$selected_game_index" '.items[$i].id // .items[$i].url' "$CACHE_DIR/$system_short.json")
 
-    display_game "$game_id" "$game_name"
+    display_game "$game_id" "$game_name" "$system_short"
   done
 }
 

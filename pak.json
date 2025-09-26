@@ -9,10 +9,11 @@
     "tg5040"
   ],
   "changelog": {
+    "v0.1.3": "Moved to a dev.cosentino.wtf API. Implemented manually selecting installed game in order to properly name the downloaded cheat file. Future versions will attempt to find the locally installed game automatically.",
     "v0.1.2": "Fixed an issue with status screens not going away.",
     "v0.1.1": "Thanks for the help from the NextUI discord for testing and feedback! Lots of fixes.",
     "v0.1.0": "Initial release. Ready for testing."
   },
   "launch": "launch.sh",
-  "version": "v0.1.2"
+  "version": "v0.1.3"
 }
