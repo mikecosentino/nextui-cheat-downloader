@@ -18,20 +18,32 @@ CHEATS_ROOT="/mnt/SDCARD/Cheats"
 CACHE_DIR="/mnt/SDCARD/.userdata/tg5040/$PAK_NAME"
 mkdir -p "$CACHE_DIR"
 
-show_status() {
-  local msg="$1"
-  minui-presenter --message "$msg" --timeout -1 &
-  STATUS_PID=$!
-  echo "Started status presenter PID=$STATUS_PID ($msg)"
+encode_uri() {
+  printf '%s' "$1" | jq -Rr @uri
 }
 
-hide_status() {
-  echo "Killing all minui-presenter instances..."
-  killall -q minui-presenter 2>/dev/null || true
-  STATUS_PID=""
+build_system_map() {
+  local map_file="$CACHE_DIR/system_map.json"
+  echo '{' > "$map_file"
+  local first=true
+  for dir in "$ROM_ROOT"/*; do
+    [ -d "$dir" ] || continue
+    folder=$(basename "$dir")
+    case "$folder" in
+      *\(*\)*)
+        short=$(printf '%s\n' "$folder" | sed -n 's/.*(\(.*\)).*/\1/p')
+        $first || echo ',' >> "$map_file"
+        first=false
+        echo "  \"$short\": \"$dir\"" >> "$map_file"
+        ;;
+    esac
+  done
+  echo '}' >> "$map_file"
 }
 
 download_cheat() {
+  local gameId="$1"
+  curl -k "https://dev.cosentino.wtf/nextui-cheat-downloader/api/cheat/$gameId" -o "$CACHE_DIR/$gameId.cht"
 }
 
 display_list() {
@@ -47,6 +59,18 @@ display_list() {
   fi
 }
 
+show_status() {
+  local msg="$1"
+  minui-presenter --message "$msg" --timeout -1 &
+  STATUS_PID=$!
+  echo "Started status presenter PID=$STATUS_PID ($msg)"
+}
+
+hide_status() {
+  echo "Killing all minui-presenter instances..."
+  killall -q minui-presenter 2>/dev/null || true
+  STATUS_PID=""
+}
 
 cache_all_systems() {
   show_status "Loading systems..."
